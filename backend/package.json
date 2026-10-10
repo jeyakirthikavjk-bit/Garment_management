@@ -7,7 +7,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "seed": "node seedData.js"
+    "seed": "node seedData.js",
+    "db:init": "node initDb.js",
+    "db:setup": "node initDb.js"
   },
   "dependencies": {
     "cors": "^2.8.5",

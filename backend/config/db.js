@@ -36,11 +36,33 @@ export function writeStoreFile(data) {
   }
 }
 
-const DB_HOST = process.env.DB_HOST || 'localhost';
-const DB_PORT = parseInt(process.env.DB_PORT || '3306', 10);
-const DB_USER = process.env.DB_USER || 'root';
-const DB_PASSWORD = process.env.DB_PASSWORD || '';
-const DB_NAME = process.env.DB_NAME || 'threadline_db';
+// Dynamically resolve DB configuration from Railway / Cloud or local environment
+export function getDbConfig() {
+  const url = process.env.MYSQL_URL || process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL;
+  if (url) {
+    try {
+      const parsed = new URL(url);
+      return {
+        uri: url,
+        host: parsed.hostname,
+        port: parsed.port ? parseInt(parsed.port, 10) : 3306,
+        user: decodeURIComponent(parsed.username),
+        password: decodeURIComponent(parsed.password),
+        database: parsed.pathname ? parsed.pathname.replace(/^\//, '') : (process.env.MYSQLDATABASE || process.env.DB_NAME || 'railway')
+      };
+    } catch {
+      return { uri: url };
+    }
+  }
+
+  const host = process.env.MYSQLHOST || process.env.DB_HOST || 'localhost';
+  const port = parseInt(process.env.MYSQLPORT || process.env.DB_PORT || '3306', 10);
+  const user = process.env.MYSQLUSER || process.env.DB_USER || 'root';
+  const password = process.env.MYSQLPASSWORD !== undefined ? process.env.MYSQLPASSWORD : (process.env.DB_PASSWORD || '');
+  const database = process.env.MYSQLDATABASE || process.env.DB_NAME || (process.env.MYSQLHOST ? 'railway' : 'threadline_db');
+
+  return { host, port, user, password, database };
+}
 
 let pool = null;
 let isDbConnected = false;
@@ -58,31 +80,52 @@ export async function initializeDatabase() {
 
   initPromise = (async () => {
     try {
-      // 1. Initial connection to create database if it doesn't exist
-      const bootstrapConn = await mysql.createConnection({
-        host: DB_HOST,
-        port: DB_PORT,
-        user: DB_USER,
-        password: DB_PASSWORD,
-        connectTimeout: 5000
-      });
+      const dbConfig = getDbConfig();
 
-      await bootstrapConn.query(`CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\`;`);
-      await bootstrapConn.end();
+      // 1. Initial bootstrap only on localhost to auto-create database if missing
+      // (For Railway / Cloud databases, the DB already exists and CREATE DATABASE is usually restricted)
+      if (!dbConfig.uri && (dbConfig.host === 'localhost' || dbConfig.host === '127.0.0.1')) {
+        try {
+          const bootstrapConn = await mysql.createConnection({
+            host: dbConfig.host,
+            port: dbConfig.port,
+            user: dbConfig.user,
+            password: dbConfig.password,
+            connectTimeout: 5000
+          });
+          await bootstrapConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbConfig.database}\`;`);
+          await bootstrapConn.end();
+        } catch {
+          // Non-critical if database already exists or root bootstrap is restricted
+        }
+      }
 
       // 2. Create optimized connection pool for the target database
-      pool = mysql.createPool({
-        host: DB_HOST,
-        port: DB_PORT,
-        user: DB_USER,
-        password: DB_PASSWORD,
-        database: DB_NAME,
+      const poolOptions = {
         waitForConnections: true,
         connectionLimit: 10,
         queueLimit: 0,
         enableKeepAlive: true,
-        keepAliveInitialDelay: 0
-      });
+        keepAliveInitialDelay: 0,
+        connectTimeout: 10000
+      };
+
+      if (process.env.DB_SSL === 'true') {
+        poolOptions.ssl = { rejectUnauthorized: false };
+      }
+
+      if (dbConfig.uri && !dbConfig.host) {
+        pool = mysql.createPool(dbConfig.uri);
+      } else {
+        pool = mysql.createPool({
+          host: dbConfig.host,
+          port: dbConfig.port,
+          user: dbConfig.user,
+          password: dbConfig.password,
+          database: dbConfig.database,
+          ...poolOptions
+        });
+      }
 
       // 3. Test pool connectivity
       const testConn = await pool.getConnection();
@@ -98,7 +141,9 @@ export async function initializeDatabase() {
       `);
 
       isDbConnected = true;
-      console.log(`✅ MySQL Database "${DB_NAME}" connected & initialized successfully!`);
+      const targetDbName = dbConfig.database || 'Database';
+      const targetHost = dbConfig.host || 'Railway Cloud';
+      console.log(`✅ MySQL Database "${targetDbName}" on [${targetHost}] connected & initialized successfully!`);
       return pool;
     } catch (error) {
       console.warn(`ℹ️ MySQL connection notice (${error.message}). Operating with local high-speed persistent store.`);

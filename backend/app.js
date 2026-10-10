@@ -27,7 +27,8 @@ import {
   getSingleCollectionFromDb,
   saveSingleCollectionToDb,
   query,
-  initializeDatabase
+  initializeDatabase,
+  getDbConfig
 } from './config/db.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -60,13 +61,17 @@ app.use('/api/supplier', supplierRouter);
 // Health Check Endpoint
 app.get('/api/health', async (req, res) => {
   const dbConn = await initializeDatabase();
-  const dbName = process.env.DB_NAME || 'threadline_db';
-  const dbHost = process.env.DB_HOST || 'localhost';
+  const dbCfg = getDbConfig();
+  const dbName = dbCfg.database || 'threadline_db';
+  const dbHost = dbCfg.host || 'localhost';
+  const isCloud = !!(process.env.MYSQL_URL || process.env.MYSQLHOST || (dbCfg.host && dbCfg.host !== 'localhost' && dbCfg.host !== '127.0.0.1'));
 
   if (!dbConn) {
     return res.status(503).json({
       status: 'offline',
       engine: 'MySQL',
+      host: dbHost,
+      database: dbName,
       message: 'MySQL server unreachable or connection failed. Using local resilient data store.'
     });
   }
@@ -76,6 +81,7 @@ app.get('/api/health', async (req, res) => {
     engine: 'MySQL',
     database: dbName,
     host: dbHost,
+    isCloud,
     connected: true,
     timestamp: new Date().toISOString()
   });
@@ -218,6 +224,7 @@ app.get('/api/pinterest/fetch', async (req, res) => {
 app.get(['/api/status', ...(fs.existsSync(frontendDist) ? [] : ['/'])], (req, res) => {
   const connected = isConnected();
   const port = process.env.PORT || 5000;
+  const hostUrl = req.get('host') ? `${req.protocol}://${req.get('host')}` : `http://localhost:${port}`;
   res.send(`
     <!DOCTYPE html>
     <html lang="en">
@@ -241,7 +248,7 @@ app.get(['/api/status', ...(fs.existsSync(frontendDist) ? [] : ['/'])], (req, re
         <div class="card">
           <span class="badge online"><span>●</span> ${connected ? 'MySQL Engine Ready' : 'Local Persistent Engine Active'}</span>
           <h1>Garment ERP & POS API Server</h1>
-          <p>Running on <code>http://localhost:${port}</code></p>
+          <p>Public Server URL: <code>${hostUrl}</code></p>
           <hr />
           <h3>Segregated REST Modules:</h3>
           <ul>

@@ -13,6 +13,8 @@
     "build": "npm run build --prefix frontend",
     "install:frontend": "npm install --prefix frontend",
     "install:backend": "npm install --prefix backend",
-    "install:all": "npm install --prefix frontend && npm install --prefix backend"
+    "install:all": "npm install --prefix frontend && npm install --prefix backend",
+    "db:init": "npm run db:init --prefix backend",
+    "db:setup": "npm run db:setup --prefix backend"
   }
 }
